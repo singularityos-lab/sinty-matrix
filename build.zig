@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const strip = b.option(bool, "strip", "strip debug information from the service and the tool");
 
     const proto = b.createModule(.{ .root_source_file = b.path("proto/proto.zig") });
 
@@ -32,12 +33,21 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("daemon/main.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip,
         .imports = &.{.{ .name = "proto", .module = proto }},
     });
     const opts = b.addOptions();
     opts.addOption(u16, "firmware_version", firmwareVersion(b));
     daemon_mod.addOptions("build_options", opts);
     const daemon = b.addExecutable(.{ .name = "sinty-matrixd", .root_module = daemon_mod });
+    const ctl = b.addExecutable(.{ .name = "sinty-matrixctl", .root_module = b.createModule(.{
+        .root_source_file = b.path("ctl/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .strip = strip,
+        .imports = &.{.{ .name = "proto", .module = proto }},
+    }) });
+    b.installArtifact(ctl);
     b.getInstallStep().dependOn(&b.addInstallArtifact(daemon, .{ .dest_dir = .{ .override = .{ .custom = "libexec" } } }).step);
     b.getInstallStep().dependOn(&fw_install.step);
 

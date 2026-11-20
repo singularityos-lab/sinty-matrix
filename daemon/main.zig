@@ -277,11 +277,20 @@ fn serve(dev: ?*Device) !void {
     }
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const p = findProfile(arena) orelse {
+    const argv = try init.args.toSlice(arena);
+    const p = if (argv.len > 1) explicit: {
+        const path = argv[1];
+        var buf: [2048]u8 = undefined;
+        const text = readFile(path, &buf) orelse {
+            log("{s}: cannot read", .{path});
+            return error.NoProfile;
+        };
+        break :explicit try parseProfile(arena, text);
+    } else findProfile(arena) orelse {
         log("this device has no LED matrix", .{});
         return;
     };

@@ -39,12 +39,19 @@ reset=38
 firmware=/usr/share/sinty-matrix/uno-q.bin
 ```
 
+`sinty-matrixd` takes an optional profile path as its only argument, for testing a
+board before its profile is installed.
+
+`sinty-matrixctl` talks to the running service: `info`, `clear`, `brightness 0-7`,
+`fill 0-7`, `levels` and `demo [seconds]`.
+
 ## Build
 
     zig build -Doptimize=ReleaseSafe
     zig build test
 
-`zig build` installs `libexec/sinty-matrixd` and `share/sinty-matrix/uno-q.bin`. The
+`zig build` installs `libexec/sinty-matrixd`, `bin/sinty-matrixctl` and
+`share/sinty-matrix/uno-q.bin`; `-Dstrip=true` drops debug information. The
 tests include a simulated STM32U5 debug port and flash controller, so the flasher is
 exercised bit by bit without a board.
 
