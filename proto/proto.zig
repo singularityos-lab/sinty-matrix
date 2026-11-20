@@ -11,6 +11,7 @@ pub const Kind = enum(u8) {
     frame = 0x10,
     brightness = 0x11,
     clear = 0x12,
+    hold = 0x13,
     info = 0x81,
     _,
 };

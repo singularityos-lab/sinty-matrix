@@ -184,41 +184,74 @@ fn listen() !i32 {
     return fd;
 }
 
-const Device = struct {
-    port: serial.Port,
-    info: proto.Info,
+const Shown = struct {
     frame: [proto.max_payload]u8 = undefined,
     have_frame: bool = false,
     brightness: ?u8 = null,
+};
+
+const Device = struct {
+    port: serial.Port,
+    info: proto.Info,
+    base: Shown = .{},
+    held: Shown = .{},
+    holder: ?i32 = null,
 
     fn pixels(self: *const Device) usize {
         return @as(usize, self.info.width) * self.info.height;
     }
 
-    fn apply(self: *Device, kind: proto.Kind, payload: []const u8) void {
+    fn visible(self: *Device) *Shown {
+        return if (self.holder != null) &self.held else &self.base;
+    }
+
+    fn apply(self: *Device, client: i32, kind: proto.Kind, payload: []const u8) void {
+        if (kind == .hold) {
+            if (payload.len != 1) return;
+            if (payload[0] != 0) {
+                self.holder = client;
+                self.held = .{ .brightness = self.base.brightness };
+            } else if (self.holder == client) {
+                self.release();
+            }
+            return;
+        }
+        const target = if (self.holder) |h| (if (h == client) &self.held else &self.base) else &self.base;
+        const shown = target == self.visible();
         switch (kind) {
             .frame => {
                 if (payload.len != self.pixels()) return;
-                @memcpy(self.frame[0..payload.len], payload);
-                self.have_frame = true;
-                self.port.send(.frame, payload) catch |err| log("frame: {s}", .{@errorName(err)});
+                @memcpy(target.frame[0..payload.len], payload);
+                target.have_frame = true;
+                if (shown) self.port.send(.frame, payload) catch |err| log("frame: {s}", .{@errorName(err)});
             },
             .brightness => {
                 if (payload.len != 1) return;
-                self.brightness = payload[0];
-                self.port.send(.brightness, payload) catch {};
+                target.brightness = payload[0];
+                if (shown) self.port.send(.brightness, payload) catch {};
             },
             .clear => {
-                self.have_frame = false;
-                self.port.send(.clear, &.{}) catch {};
+                target.have_frame = false;
+                if (shown) self.port.send(.clear, &.{}) catch {};
             },
             else => {},
         }
     }
 
+    fn release(self: *Device) void {
+        self.holder = null;
+        if (!self.base.have_frame) self.port.send(.clear, &.{}) catch {};
+        self.refresh();
+    }
+
+    fn gone(self: *Device, client: i32) void {
+        if (self.holder == client) self.release();
+    }
+
     fn refresh(self: *Device) void {
-        if (self.brightness) |b| self.port.send(.brightness, &.{b}) catch {};
-        if (self.have_frame) self.port.send(.frame, self.frame[0..self.pixels()]) catch {};
+        const v = self.visible();
+        if (v.brightness) |b| self.port.send(.brightness, &.{b}) catch {};
+        if (v.have_frame) self.port.send(.frame, v.frame[0..self.pixels()]) catch {};
     }
 
     pub fn packet(_: *Device, _: proto.Packet) void {}
@@ -249,6 +282,7 @@ fn serve(dev: ?*Device) !void {
             var buf: [1 + proto.max_payload]u8 = undefined;
             const r = linux.recvfrom(fds[i].fd, &buf, buf.len, 0, null, null);
             if (linux.errno(r) != .SUCCESS or r == 0) {
+                if (dev) |d| d.gone(fds[i].fd);
                 _ = linux.close(fds[i].fd);
                 fds[i] = fds[1 + clients];
                 clients -= 1;
@@ -264,7 +298,7 @@ fn serve(dev: ?*Device) !void {
                     len = reply.len;
                 }
                 _ = linux.sendto(fds[i].fd, &reply, len, linux.MSG.NOSIGNAL, null, 0);
-            } else if (dev) |d| d.apply(kind, buf[1..r]);
+            } else if (dev) |d| d.apply(fds[i].fd, kind, buf[1..r]);
             i += 1;
         }
         if (fds[0].revents != 0 and clients < max_clients) {
@@ -306,6 +340,47 @@ pub fn main(init: std.process.Init.Minimal) !void {
         log("matrix {d}x{d}, {d} levels, firmware {d}", .{ info.width, info.height, info.levels, info.firmware });
     }
     try serve(dev);
+}
+
+fn sentFrames(fd: i32, out: *[8]u8) usize {
+    var parser: proto.Parser = .{};
+    var buf: [4096]u8 = undefined;
+    const r = linux.read(fd, &buf, buf.len);
+    if (linux.errno(r) != .SUCCESS) return 0;
+    var n: usize = 0;
+    for (buf[0..r]) |b| {
+        if (parser.push(b)) |pkt| {
+            out[n] = switch (pkt.kind) {
+                .frame => pkt.payload[0],
+                .clear => 'c',
+                .brightness => 'b',
+                else => '?',
+            };
+            n += 1;
+        }
+    }
+    return n;
+}
+
+test "a held matrix shows only the holder and comes back on release" {
+    var pipe: [2]i32 = undefined;
+    _ = linux.pipe2(&pipe, .{ .NONBLOCK = true });
+    defer _ = linux.close(pipe[0]);
+    defer _ = linux.close(pipe[1]);
+    var d: Device = .{ .port = .{ .fd = pipe[1] }, .info = .{ .proto = 1, .width = 2, .height = 1, .levels = 8, .firmware = 1 } };
+    var got: [8]u8 = undefined;
+    d.apply(10, .frame, &.{ 1, 1 });
+    try std.testing.expectEqualSlices(u8, &.{1}, got[0..sentFrames(pipe[0], &got)]);
+    d.apply(20, .hold, &.{1});
+    d.apply(20, .frame, &.{ 2, 2 });
+    d.apply(10, .frame, &.{ 3, 3 });
+    try std.testing.expectEqualSlices(u8, &.{2}, got[0..sentFrames(pipe[0], &got)]);
+    d.refresh();
+    try std.testing.expectEqualSlices(u8, &.{2}, got[0..sentFrames(pipe[0], &got)]);
+    d.gone(20);
+    try std.testing.expectEqualSlices(u8, &.{3}, got[0..sentFrames(pipe[0], &got)]);
+    d.apply(10, .frame, &.{ 4, 4 });
+    try std.testing.expectEqualSlices(u8, &.{4}, got[0..sentFrames(pipe[0], &got)]);
 }
 
 test "a device profile parses" {
