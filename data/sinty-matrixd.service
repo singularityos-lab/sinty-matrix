@@ -1,0 +1,12 @@
+[Unit]
+Description=Sinty LED matrix service
+ConditionPathExists=/proc/device-tree/compatible
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/sinty-matrixd
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
