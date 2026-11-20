@@ -28,6 +28,11 @@ framing: a hello gets the matrix size, levels and firmware version back, then fr
 a brightness cap or a clear. The service sends the last frame again every few
 seconds, so a controller reset never leaves the matrix dark.
 
+A client can also hold the matrix, for a live preview such as LED Studio's. While a
+client holds it, only that client's frames reach the matrix and frames from others
+are kept as the base state. When the holder releases the matrix or disconnects, the
+base state comes back, or the matrix is cleared if there is none.
+
 Device profiles live in `/usr/share/sinty-matrix/devices/<compatible>.conf`:
 
 ```
