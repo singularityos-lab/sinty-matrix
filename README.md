@@ -15,8 +15,8 @@ the controller runs anything else, including the Arduino sketch loader it ships 
 the service flashes `uno-q.bin` itself: it drives the controller's SWD debug port
 from three GPIO lines of the main processor, checks the debug port identity before
 writing anything, erases and programs the flash, reads it back and restarts the
-controller. A flash that keeps failing stops after three attempts; remove
-`/var/lib/sinty-matrix/flash-attempts` to try again.
+controller. A flash that keeps failing stops after three attempts and tries again
+on the next boot; every step it reports goes to the kernel log.
 
 The firmware in `firmware/uno-q` is a small bare-metal program. It scans the 104
 charlieplexed LEDs at 100 Hz with 8 brightness levels and shows the last frame it

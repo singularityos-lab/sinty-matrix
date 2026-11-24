@@ -8,9 +8,8 @@ const stm32u5 = @import("stm32u5.zig");
 const serial = @import("serial.zig");
 
 const profiles = "/usr/share/sinty-matrix/devices";
-const state_dir = "/var/lib/sinty-matrix";
-const attempts_path = state_dir ++ "/flash-attempts";
 const run_dir = "/run/sinty-matrix";
+const attempts_path = run_dir ++ "/flash-attempts";
 const socket_path = run_dir ++ "/socket";
 const client_group = "singularity-session";
 const max_attempts = 3;
@@ -21,6 +20,11 @@ fn log(comptime fmt: []const u8, args: anytype) void {
     var buf: [512]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, "sinty-matrixd: " ++ fmt ++ "\n", args) catch return;
     _ = linux.write(2, s.ptr, s.len);
+    const kmsg = linux.open("/dev/kmsg", .{ .ACCMODE = .WRONLY, .CLOEXEC = true }, 0);
+    if (linux.errno(kmsg) != .SUCCESS) return;
+    const fd: i32 = @intCast(kmsg);
+    defer _ = linux.close(fd);
+    _ = linux.write(fd, s.ptr, s.len);
 }
 
 fn readFile(path: [:0]const u8, buf: []u8) ?[]u8 {
@@ -104,7 +108,7 @@ fn attempts() u32 {
 }
 
 fn setAttempts(n: u32) void {
-    _ = linux.mkdir(state_dir, 0o755);
+    _ = linux.mkdir(run_dir, 0o755);
     var buf: [16]u8 = undefined;
     writeFile(attempts_path, std.fmt.bufPrint(&buf, "{d}\n", .{n}) catch return);
 }
@@ -133,7 +137,7 @@ fn bringUp(arena: std.mem.Allocator, p: Profile, port: *serial.Port) ?proto.Info
     }
     const n = attempts();
     if (n >= max_attempts) {
-        log("{d} flash attempts did not bring up firmware {d}; remove {s} to try again", .{ n, build_options.firmware_version, attempts_path });
+        log("{d} flash attempts did not bring up firmware {d}; the next boot tries again", .{ n, build_options.firmware_version });
         return null;
     }
     setAttempts(n + 1);
