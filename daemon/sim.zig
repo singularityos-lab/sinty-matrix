@@ -245,3 +245,15 @@ test "a fault answer stops the transfer" {
     var link: SimLink = .{ .pins = .{ .target = &t } };
     try std.testing.expectError(error.Fault, link.connect());
 }
+
+test "a flash that fails after the halt leaves the controller running" {
+    var t: Target = .{ .gpa = std.testing.allocator };
+    defer t.mem.deinit(std.testing.allocator);
+    var link: SimLink = .{ .pins = .{ .target = &t } };
+    const too_big = try std.testing.allocator.alloc(u8, 128 * 8 * 1024 + 1);
+    defer std.testing.allocator.free(too_big);
+    try std.testing.expectError(error.TooLarge, stm32u5.flash(&link, too_big));
+    try std.testing.expect(!t.halted);
+    try std.testing.expect(t.locked);
+    try std.testing.expectEqual(@as(u32, 0), t.flash_writes);
+}

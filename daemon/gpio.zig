@@ -49,13 +49,23 @@ const set_config = iowr(0x0d, Config);
 const get_values = iowr(0x0e, Values);
 const set_values = iowr(0x0f, Values);
 
-fn ioctl(fd: i32, req: u32, arg: *anyopaque) !void {
+pub const Failure = struct {
+    op: []const u8 = "",
+    errno: linux.E = .SUCCESS,
+};
+
+pub var last_failure: Failure = .{};
+
+fn ioctl(fd: i32, req: u32, arg: *anyopaque, op: []const u8) !void {
     while (true) {
         const rc = linux.ioctl(fd, req, @intFromPtr(arg));
         switch (linux.errno(rc)) {
             .SUCCESS => return,
             .INTR => continue,
-            else => return error.Ioctl,
+            else => |e| {
+                last_failure = .{ .op = op, .errno = e };
+                return error.Ioctl;
+            },
         }
     }
 }
@@ -95,7 +105,7 @@ pub const Lines = struct {
         const all: u64 = (@as(u64, 1) << @intCast(offsets.len)) - 1;
         req.config = .{ .flags = flag_output, .num_attrs = 1 };
         req.config.attrs[0] = .{ .attr = .{ .id = attr_values, .value = initial }, .mask = all };
-        try ioctl(chip, get_line, &req);
+        try ioctl(chip, get_line, &req, "request the lines");
         return .{ .fd = req.fd, .count = @intCast(offsets.len), .outputs = all, .values = initial };
     }
 
@@ -116,18 +126,18 @@ pub const Lines = struct {
             cfg.attrs[0] = cfg.attrs[1];
             cfg.num_attrs = 1;
         }
-        try ioctl(self.fd, set_config, &cfg);
+        try ioctl(self.fd, set_config, &cfg, if (output) "drive swdio" else "release swdio");
     }
 
     pub fn set(self: *Lines, mask: u64, bits: u64) !void {
         self.values = (self.values & ~mask) | (bits & mask);
         var v: Values = .{ .bits = self.values, .mask = mask & self.outputs };
-        try ioctl(self.fd, set_values, &v);
+        try ioctl(self.fd, set_values, &v, "set the lines");
     }
 
     pub fn get(self: *Lines, line: u6) !bool {
         var v: Values = .{ .bits = 0, .mask = @as(u64, 1) << line };
-        try ioctl(self.fd, get_values, &v);
+        try ioctl(self.fd, get_values, &v, "read swdio");
         return v.bits & v.mask != 0;
     }
 };

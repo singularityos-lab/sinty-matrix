@@ -143,7 +143,12 @@ fn bringUp(arena: std.mem.Allocator, p: Profile, port: *serial.Port) ?proto.Info
     setAttempts(n + 1);
     log("flashing the matrix controller with firmware {d}", .{build_options.firmware_version});
     flash(arena, p) catch |err| {
-        log("flash failed: {s}", .{@errorName(err)});
+        if (err == error.Ioctl) {
+            const f = gpio.last_failure;
+            log("flash failed: {s}: {s} on {s} lines {d}, {d}, {d}", .{ f.op, @tagName(f.errno), p.gpio, p.swclk, p.swdio, p.reset });
+        } else {
+            log("flash failed: {s}", .{@errorName(err)});
+        }
         return null;
     };
     var tries: u32 = 0;

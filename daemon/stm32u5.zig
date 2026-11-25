@@ -61,6 +61,7 @@ pub fn halt(link: anytype) Error!swd.Mem(@TypeOf(link.*)) {
     };
     if (id != expected_dpidr) return error.BadIdentity;
     var mem = try swd.Mem(@TypeOf(link.*)).init(link);
+    errdefer restart(link, &mem);
     try mem.write32(dhcsr, dbg_key | 0b11);
     try mem.write32(demcr, (try mem.read32(demcr)) | 1);
     try link.holdReset(false);
@@ -126,6 +127,18 @@ pub fn run(link: anytype, mem: anytype) Error!void {
 
 pub fn flash(link: anytype, image: []const u8) Error!void {
     var mem = try halt(link);
+    errdefer restart(link, &mem);
     try program(&mem, image);
     try run(link, &mem);
+}
+
+// restart undoes halt after a failed flash: the halt sets debug registers that
+// only a power cycle clears, so without it the controller stays stopped.
+pub fn restart(link: anytype, mem: anytype) void {
+    mem.write32(nscr, cr_lock) catch {};
+    run(link, mem) catch {
+        link.holdReset(true) catch {};
+        sleepMs(20);
+        link.holdReset(false) catch {};
+    };
 }
