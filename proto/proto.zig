@@ -100,3 +100,28 @@ test "a corrupted packet is dropped and the next one is read" {
 test "the info record keeps its wire layout" {
     try std.testing.expectEqual(@as(usize, 6), @sizeOf(Info));
 }
+
+test "any byte stream is survived and a clean packet after a pause is always read" {
+    var prng = std.Random.DefaultPrng.init(0xa55a);
+    const rand = prng.random();
+    var p: Parser = .{};
+    var out: [max_packet]u8 = undefined;
+    var payload: [max_payload]u8 = undefined;
+    for (0..5000) |_| {
+        for (0..rand.uintAtMost(usize, 600)) |_| {
+            if (p.push(rand.int(u8))) |got| try std.testing.expect(got.payload.len <= max_payload);
+        }
+        for (0..max_packet) |_| _ = p.push(0);
+        const len = rand.uintAtMost(usize, max_payload);
+        rand.bytes(payload[0..len]);
+        const kind: Kind = @enumFromInt(rand.int(u8));
+        var got: ?Packet = null;
+        for (encode(&out, kind, payload[0..len])) |b| {
+            try std.testing.expect(got == null);
+            got = p.push(b);
+        }
+        try std.testing.expect(got != null);
+        try std.testing.expectEqual(kind, got.?.kind);
+        try std.testing.expectEqualSlices(u8, payload[0..len], got.?.payload);
+    }
+}

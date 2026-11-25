@@ -271,7 +271,7 @@ fn serve(dev: ?*Device) !void {
     var fds: [2 + max_clients]linux.pollfd = undefined;
     var clients: usize = 0;
     while (true) {
-        fds[0] = .{ .fd = lfd, .events = linux.POLL.IN, .revents = 0 };
+        fds[0] = .{ .fd = lfd, .events = if (clients < max_clients) linux.POLL.IN else 0, .revents = 0 };
         fds[1] = .{ .fd = if (dev) |d| d.port.fd else -1, .events = linux.POLL.IN, .revents = 0 };
         const n = linux.poll(&fds, 2 + clients, keepalive_ms);
         if (linux.errno(n) != .SUCCESS) continue;
@@ -415,4 +415,20 @@ test {
     _ = gpio;
     _ = swd;
     _ = serial;
+}
+
+test "any text either parses into a profile or is refused" {
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const rand = prng.random();
+    const alphabet = "serialgpioswclkdreftmw=# \t\r\n0123456789-+/x";
+    var text: [256]u8 = undefined;
+    for (0..20000) |_| {
+        var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena_state.deinit();
+        const len = rand.uintLessThan(usize, text.len);
+        for (text[0..len]) |*c| c.* = if (rand.boolean()) alphabet[rand.uintLessThan(usize, alphabet.len)] else rand.int(u8);
+        if (parseProfile(arena_state.allocator(), text[0..len])) |p| {
+            try std.testing.expect(p.serial.len > 0);
+        } else |_| {}
+    }
 }
