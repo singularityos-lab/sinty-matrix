@@ -91,6 +91,18 @@ pub fn findChip(controller: []const u8) !i32 {
     return error.NoChip;
 }
 
+fn directionConfig(count: u6, outputs: u64, values: u64) Config {
+    const all: u64 = (@as(u64, 1) << count) - 1;
+    var cfg: Config = .{ .flags = flag_output, .num_attrs = 0 };
+    if (all & ~outputs != 0) {
+        cfg.attrs[cfg.num_attrs] = .{ .attr = .{ .id = attr_flags, .value = flag_input }, .mask = all & ~outputs };
+        cfg.num_attrs += 1;
+    }
+    cfg.attrs[cfg.num_attrs] = .{ .attr = .{ .id = attr_values, .value = values }, .mask = outputs };
+    cfg.num_attrs += 1;
+    return cfg;
+}
+
 pub const Lines = struct {
     fd: i32,
     count: u6,
@@ -118,14 +130,7 @@ pub const Lines = struct {
         const bit = @as(u64, 1) << line;
         if (output == (self.outputs & bit != 0)) return;
         if (output) self.outputs |= bit else self.outputs &= ~bit;
-        const all: u64 = (@as(u64, 1) << self.count) - 1;
-        var cfg: Config = .{ .flags = flag_output, .num_attrs = 2 };
-        cfg.attrs[0] = .{ .attr = .{ .id = attr_flags, .value = flag_input }, .mask = all & ~self.outputs };
-        cfg.attrs[1] = .{ .attr = .{ .id = attr_values, .value = self.values }, .mask = self.outputs };
-        if (cfg.attrs[0].mask == 0) {
-            cfg.attrs[0] = cfg.attrs[1];
-            cfg.num_attrs = 1;
-        }
+        var cfg = directionConfig(self.count, self.outputs, self.values);
         try ioctl(self.fd, set_config, &cfg, if (output) "drive swdio" else "release swdio");
     }
 
@@ -148,4 +153,26 @@ test "the uapi structs keep the kernel sizes" {
     try std.testing.expectEqual(@as(usize, 272), @sizeOf(Config));
     try std.testing.expectEqual(@as(usize, 592), @sizeOf(Request));
     try std.testing.expectEqual(@as(u32, 0xc250b407), get_line);
+}
+
+fn kernelAccepts(cfg: Config) bool {
+    if (cfg.num_attrs > cfg.attrs.len) return false;
+    for (cfg.padding) |p| if (p != 0) return false;
+    for (cfg.attrs[0..cfg.num_attrs]) |a| if (a.attr.padding != 0) return false;
+    const unused = std.mem.sliceAsBytes(cfg.attrs[cfg.num_attrs..]);
+    for (unused) |b| if (b != 0) return false;
+    return true;
+}
+
+test "switching swdio either way gives a config the kernel accepts" {
+    const all: u64 = 0b111;
+    const released = directionConfig(3, all & ~@as(u64, 0b010), 0b100);
+    try std.testing.expect(kernelAccepts(released));
+    try std.testing.expectEqual(@as(u32, 2), released.num_attrs);
+    try std.testing.expectEqual(@as(u64, 0b010), released.attrs[0].mask);
+    const driven = directionConfig(3, all, 0b101);
+    try std.testing.expect(kernelAccepts(driven));
+    try std.testing.expectEqual(@as(u32, 1), driven.num_attrs);
+    try std.testing.expectEqual(attr_values, driven.attrs[0].attr.id);
+    try std.testing.expectEqual(all, driven.attrs[0].mask);
 }
