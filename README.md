@@ -60,6 +60,12 @@ board before its profile is installed.
 tests include a simulated STM32U5 debug port and flash controller, so the flasher is
 exercised bit by bit without a board.
 
+`scripts/socket-fuzz.py <sinty-matrixd> <seconds> <seed> [WIDTHxHEIGHT]` runs the
+service against a simulated controller on a pseudo terminal and sends it random
+packets from many clients at once. It fails if the service exits, stops answering
+a hello or keeps descriptors. It needs its own `/run`, for example
+`bwrap --dev-bind / / --tmpfs /run --tmpfs /tmp --unshare-pid --proc /proc`.
+
 To give the UNO Q back to Arduino App Lab, burn the Arduino loader again with
 `arduino-cli burn-bootloader -b arduino:zephyr:unoq`.
 
